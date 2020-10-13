@@ -1,0 +1,1851 @@
+using System;
+using System.IO;
+using System.Collections.Generic;
+using System.Linq;
+using Aspose.Words;
+using Aspose.Words.Layout;
+using Aspose.Words.Tables;
+using Aspose.Words.Fields;
+using CMCai.Models;
+using Aspose.Words.Properties;
+using System.Text.RegularExpressions;
+using System.Configuration;
+using System.Drawing;
+using System.Data;
+using System.Text;
+
+namespace CMCai.Actions
+{
+    public class WordDocumentActions
+    {
+        //  string sourcePath1 = ConfigurationManager.AppSettings["SourceFolderPath"].ToString();//System.Web.Hosting.HostingEnvironment.MapPath("~/RegOpsQCSource/");
+        //  string destPath1 = ConfigurationManager.AppSettings["SourceFolderPath"].ToString();//System.Web.Hosting.HostingEnvironment.MapPath("~/RegOpsQCSource/");
+        //  string sourcePathFolder = System.Web.Hosting.HostingEnvironment.MapPath("~/RegOpsQCDestination/");
+
+        public string m_ConnectionString = ConfigurationManager.AppSettings["CmcConnection"].ToString();
+        public string m_DummyConn = ConfigurationManager.AppSettings["DummySchema"].ToString();
+        public string m_Conn = ConfigurationManager.AppSettings["CmcConnection"].ToString();
+
+        string sourcePath = string.Empty;
+        string destPath = string.Empty;
+
+        public string getConnectionInfo(Int64 userID)
+        {
+            string m_Result = string.Empty;
+            Connection conn = new Connection();
+            conn.connectionstring = m_Conn;
+            try
+            {
+
+                DataSet ds = new DataSet();
+                ds = conn.GetDataSet("SELECT org.ORGANIZATION_SCHEMA as ORGANIZATION_SCHEMA,org.ORGANIZATION_PASSWORD as ORGANIZATION_PASSWORD FROM USERS us LEFT JOIN ORGANIZATIONS org ON org.ORGANIZATION_ID=us.ORGANIZATION_ID WHERE USER_ID=" + userID, CommandType.Text, ConnectionState.Open);
+                if (conn.Validate(ds))
+                {
+                    m_Result = ds.Tables[0].Rows[0]["ORGANIZATION_SCHEMA"].ToString() + "|" + ds.Tables[0].Rows[0]["ORGANIZATION_PASSWORD"].ToString();
+                }
+                return m_Result;
+
+            }
+            catch (Exception ex)
+            {
+                ErrorLogger.Error(ex);
+                return m_Result;
+            }
+
+        }
+
+        /// <summary>
+        /// File format in doc or docx - check
+        /// </summary>
+        /// <param name="rObj"></param>
+        /// <param name="doc"></param>
+        public void DocumentFormat(RegOpsQC rObj, Document doc)
+        {
+            rObj.QC_Result = string.Empty;
+            rObj.Comments = string.Empty;
+            string res = string.Empty;
+            rObj.CHECK_START_TIME = DateTime.Now;
+            try
+            {
+                string ext = Path.GetExtension(rObj.DestFilePath);
+                if (ext.ToLower() == ".doc" || ext.ToLower() == ".docx")
+                {
+                    rObj.QC_Result = "Passed";
+                    rObj.Comments = "File Extension is " + ext + ".";
+                }
+                else
+                {
+                    rObj.QC_Result = "Failed";
+                    rObj.Comments = "File is not in Correct Extension.";
+                }
+                rObj.CHECK_END_TIME = DateTime.Now;
+            }
+            catch (Exception ex)
+            {
+                ErrorLogger.Error("JOB_ID:" + rObj.Job_ID + ", CHECK NAME: " + rObj.Check_Name + "\n" + ex);
+                rObj.Job_Status = "Error";
+                rObj.QC_Result = "Error";
+                rObj.Comments = "Technical error: " + ex.Message;
+            }
+        }
+
+        /// <summary>
+        /// File name Length - check
+        /// </summary>
+        /// <param name="rObj"></param>
+        /// <param name="doc"></param>
+        public void FileNameLength(RegOpsQC rObj, Document doc)
+        {
+            rObj.QC_Result = string.Empty;
+            rObj.Comments = string.Empty;
+            string res = string.Empty;
+            rObj.CHECK_START_TIME = DateTime.Now;
+            try
+            {
+                String originalFileName = Path.GetFileNameWithoutExtension(doc.OriginalFileName);
+                if (rObj.Check_Parameter != "" && rObj.Check_Parameter != null)
+                {
+                    if (originalFileName.Length == Convert.ToInt64(rObj.Check_Parameter.ToString()))
+                    {
+                        rObj.QC_Result = "Passed";
+                        rObj.Comments = "File Name length is in Size " + rObj.Check_Parameter + ".";
+                    }
+                    else
+                    {
+                        rObj.QC_Result = "Failed";
+                        rObj.Comments = "File Name length is not in Size " + rObj.Check_Parameter + ".";
+                    }
+                }
+                else
+                {
+                    rObj.QC_Result = "Failed";
+                    rObj.Comments = "File Name length not defined.";
+                }
+                rObj.CHECK_END_TIME = DateTime.Now;
+            }
+            catch (Exception ex)
+            {
+                ErrorLogger.Error("JOB_ID:" + rObj.Job_ID + ", CHECK NAME: " + rObj.Check_Name + "\n" + ex);
+                rObj.Job_Status = "Error";
+                rObj.QC_Result = "Error";
+                rObj.Comments = "Technical error: " + ex.Message;
+            }
+        }
+
+        /// <summary>
+        /// No Security - check
+        /// </summary>
+        /// <param name="rObj"></param>
+        /// <param name="doc"></param>
+        public void VerifyPasswordprotection(RegOpsQC rObj, Document doc)
+        {
+            rObj.QC_Result = string.Empty;
+            rObj.Comments = string.Empty;
+            rObj.CHECK_START_TIME = DateTime.Now;
+            try
+            {
+                destPath = rObj.DestFilePath + rObj.Job_ID + "/Destination/" + rObj.File_Name;
+                try
+                {
+                    rObj.QC_Result = "Passed";
+                    rObj.Comments = "Document is not protected with password";
+                    if (Path.GetExtension(rObj.File_Name) == ".doc")
+                        foreach (Section sct in doc.Sections)
+                        {
+                            foreach (Paragraph pr in sct.Body.GetChildNodes(NodeType.Paragraph, true))
+                            {
+                                foreach (Field field in pr.Range.Fields)
+                                {
+                                    if (field.Type == FieldType.FieldRef)
+                                    {
+                                        if (((Aspose.Words.Fields.FieldRef)field).GetFieldCode() != null)
+                                        {
+                                            RegOpsQC rObj2 = new RegOpsQC();
+                                            rObj2.Bookmarkname = ((Aspose.Words.Fields.FieldRef)field).GetFieldCode();
+                                            if (rObj2.Bookmarkname.Contains("\\h") && !rObj2.Bookmarkname.Contains("MERGEFORMAT"))
+                                            {
+                                                string Fieldcode = rObj2.Bookmarkname;
+                                                Fieldcode = Fieldcode.Replace("\\h ", "\\h  \\* MERGEFORMAT ");
+                                                pr.Range.Replace(rObj2.Bookmarkname, Fieldcode);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    doc.Save(rObj.DestFilePath);
+                }
+                catch (Exception ex)
+                {
+                    if (ex.Message.Contains("The document password is incorrect") || ex.Message.Contains("File contains corrupted data"))
+                    {
+                        rObj.QC_Result = "Failed";
+                        rObj.Comments = "Document has protected with password";
+                    }
+                    else
+                    {
+                        rObj.QC_Result = "Passed";
+                        rObj.Comments = "Document is not protected with password";
+                    }
+                }
+                rObj.CHECK_END_TIME = DateTime.Now;
+            }
+            catch (Exception ex)
+            {
+                ErrorLogger.Error("JOB_ID:" + rObj.Job_ID + ", CHECK NAME: " + rObj.Check_Name + "\n" + ex);
+                rObj.Job_Status = "Error";
+                rObj.QC_Result = "Error";
+                rObj.Comments = "Technical error: " + ex.Message;
+            }
+
+        }
+
+        /// <summary>
+        /// Word properties should be blank - check
+        /// </summary>
+        /// <param name="rObj"></param>
+        /// <param name="doc"></param>
+        public void WordPropertiesBlank(RegOpsQC rObj, Document doc)
+        {
+            rObj.QC_Result = string.Empty;
+            rObj.Comments = string.Empty;
+            rObj.CHECK_START_TIME = DateTime.Now;
+            try
+            {
+                doc.RemovePersonalInformation = true;
+                BuiltInDocumentProperties properties = doc.BuiltInDocumentProperties;
+                if (properties.Author.Trim() != "" || properties.LastSavedBy.Trim() != "" || properties.Subject.Trim() != "" || properties.Title.Trim() != "" || properties.Category.Trim() != "" || properties.Comments.Trim() != "" || properties.ContentType.Trim() != "" || properties.ContentStatus.Trim() != "" || properties.Manager.Trim() != "" || properties.Company.Trim() != "")
+                {
+                    rObj.QC_Result = "Failed";
+                    rObj.Comments = "Word Properties List is not Blank.";
+                }
+                else
+                {
+                    rObj.QC_Result = "Passed";
+                    rObj.Comments = "Word Properties List is Blank.";
+                }
+                rObj.CHECK_END_TIME = DateTime.Now;
+            }
+            catch (Exception ex)
+            {
+                ErrorLogger.Error("JOB_ID:" + rObj.Job_ID + ", CHECK NAME: " + rObj.Check_Name + "\n" + ex);
+                rObj.Job_Status = "Error";
+                rObj.QC_Result = "Error";
+                rObj.Comments = "Technical error: " + ex.Message;
+            }
+        }
+
+        /// <summary>
+        /// Word properties should be blank - fix
+        /// </summary>
+        /// <param name="rObj"></param>
+        /// <param name="doc"></param>
+        public void FixWordPropertiesBlank(RegOpsQC rObj, Document doc)
+        {
+            rObj.QC_Result = string.Empty;
+            rObj.Comments = string.Empty;
+            rObj.CHECK_START_TIME = DateTime.Now;
+            try
+            {
+                doc = new Document(rObj.DestFilePath);
+                doc.RemovePersonalInformation = true;
+                BuiltInDocumentProperties properties = doc.BuiltInDocumentProperties;
+                properties.LastSavedBy = "";
+                properties.Author = "";
+                properties.Title = "";
+                properties.Subject = "";
+                properties.Category = "";
+                properties.Comments = "";
+                properties.ContentStatus = "";
+                properties.ContentType = "";
+                properties.Company = "";
+                properties.Manager = "";
+                properties.Keywords = " ";
+                rObj.QC_Result = "Fixed";
+                rObj.Comments = "Word Properties List is Removed.";
+                // doc.UpdateFields();
+                doc.Save(rObj.DestFilePath);
+                rObj.CHECK_END_TIME = DateTime.Now;
+            }
+            catch (Exception ex)
+            {
+                ErrorLogger.Error("JOB_ID:" + rObj.Job_ID + ", CHECK NAME: " + rObj.Check_Name + "\n" + ex);
+                rObj.Job_Status = "Error";
+                rObj.QC_Result = "Error";
+                rObj.Comments = "Technical error: " + ex.Message;
+            }
+        }
+
+        /// <summary>
+        /// Report blank Lines - check
+        /// </summary>
+        /// <param name="rObj"></param>
+        /// <param name="doc"></param>
+        public void ReportBlankLines(RegOpsQC rObj, Document doc)
+        {
+            rObj.QC_Result = string.Empty;
+            rObj.Comments = string.Empty;
+            bool flag = false;
+            string Pagenumber = string.Empty;
+            List<int> lstBlankLines = new List<int>();
+            try
+            {
+                rObj.CHECK_START_TIME = DateTime.Now;
+                doc = new Document(rObj.DestFilePath);
+                LayoutCollector layout = new LayoutCollector(doc);
+                foreach (Section sct in doc.Sections)
+                {
+                    NodeCollection nc = sct.Body.GetChildNodes(NodeType.Paragraph, true);
+                    foreach (Paragraph p in nc)
+                    {
+                        if (p.GetText().Trim() == "" && !p.GetText().Contains("\f") && p.GetChildNodes(NodeType.Shape, true).Count == 0)
+                        {
+                            //Report blank lines before table
+                            if ((p.PreviousSibling != null && p.PreviousSibling.NodeType == NodeType.Table) || (p.NextSibling != null && p.NextSibling.NodeType == NodeType.Table))
+                            {
+                                if (!(p.PreviousSibling != null && p.PreviousSibling.NodeType == NodeType.Table))
+                                {
+                                    flag = true;
+                                    lstBlankLines.Add(layout.GetStartPageIndex(p)); //blank lines before table
+                                }
+                            }
+                            else
+                            {
+                                //Report blank line if it is not containing a shape and not a line after shape
+                                if ((p.PreviousSibling != null && (p.PreviousSibling.NodeType == NodeType.Paragraph && ((Paragraph)p.PreviousSibling).GetChildNodes(NodeType.Shape, true).Count == 0)))
+                                {
+                                    flag = true;
+                                    lstBlankLines.Add(layout.GetStartPageIndex(p)); //other blank lines 
+                                }
+                            }
+                        }
+                    }
+                    //Remove blank line in end of section
+                    if (sct.Body.GetChildNodes(NodeType.Any, true).Count == 1 && sct.Body.GetChildNodes(NodeType.Paragraph, true).Count == 1 && sct.Body.GetChildNodes(NodeType.Paragraph, true)[0].GetText().Trim() == "")
+                    {
+                        flag = true;
+                        lstBlankLines.Add(layout.GetStartPageIndex(sct.Body.GetChildNodes(NodeType.Paragraph, true)[0])); //Blank Lines
+                    }
+                }
+                //Remove blank line in end of document
+                Node LastNode = ((Section)doc.Sections.Last()).Body.LastChild;
+                if (LastNode != null && LastNode.NodeType == NodeType.Paragraph && LastNode.PreviousSibling != null && LastNode.PreviousSibling.NodeType != NodeType.Table && LastNode.GetText().Trim() == "" && ((Paragraph)LastNode).GetChildNodes(NodeType.Shape, true).Count == 0)
+                {
+                    flag = true;
+                    lstBlankLines.Add(layout.GetStartPageIndex(LastNode));//Blank Lines
+                }
+                if (flag == true)
+                {
+                    rObj.QC_Result = "Failed";
+                    if (lstBlankLines.Count > 0)
+                    {
+                        lstBlankLines = lstBlankLines.Distinct().ToList();
+                        lstBlankLines.Sort();
+                        Pagenumber = string.Join(", ", lstBlankLines.ToArray());
+                        rObj.Comments = rObj.Comments + "\nBlank lines Exist in updated document at page(s) " + Pagenumber;
+                    }
+                }
+                else
+                {
+                    rObj.QC_Result = "Passed";
+                    rObj.Comments = "Blank lines does not Exist in updated document.";
+                }
+                rObj.CHECK_END_TIME = DateTime.Now;
+            }
+            catch (Exception ex)
+            {
+                ErrorLogger.Error("JOB_ID:" + rObj.Job_ID + ", CHECK NAME: " + rObj.Check_Name + "\n" + ex);
+                rObj.Job_Status = "Error";
+                rObj.QC_Result = "Error";
+                rObj.Comments = "Technical error: " + ex.Message;
+            }
+        }
+
+
+        public void WordBlankPage(RegOpsQC rObj, Aspose.Words.Document doc)
+        {
+            rObj.QC_Result = string.Empty;
+            rObj.Comments = string.Empty;
+            bool flag = false;
+            string Pagenumber = string.Empty;
+            string FolderName = "";
+            List<int> lstBlankPages = new List<int>();
+            try
+            {
+                rObj.CHECK_START_TIME = DateTime.Now;
+                Guid guid = Guid.NewGuid();
+                string[] folderPathArr = rObj.DestFilePath.Split(new string[] { "Destination\\" }, StringSplitOptions.None);
+                FolderName = folderPathArr[0] + "Destination\\";
+                Aspose.Words.Document TempDoc = new Aspose.Words.Document(rObj.DestFilePath);
+                foreach (Section section in TempDoc)
+                {
+                    // Up to three different footers are possible in a section (for first, even and odd pages).
+                    // We check and delete all of them.
+                    Aspose.Words.HeaderFooter footer;
+                    Aspose.Words.HeaderFooter header;
+                    footer = section.HeadersFooters[HeaderFooterType.FooterFirst];
+                    if (footer != null)
+                        footer.Remove();
+
+                    // Primary footer is the footer used for odd pages.
+                    footer = section.HeadersFooters[HeaderFooterType.FooterPrimary];
+                    if (footer != null)
+                        footer.Remove();
+
+                    footer = section.HeadersFooters[HeaderFooterType.FooterEven];
+                    if (footer != null)
+                        footer.Remove();
+
+                    header = section.HeadersFooters[HeaderFooterType.HeaderFirst];
+                    if (header != null)
+                        header.Remove();
+
+                    // Primary footer is the footer used for odd pages.
+                    header = section.HeadersFooters[HeaderFooterType.HeaderPrimary];
+                    if (header != null)
+                        header.Remove();
+
+                    header = section.HeadersFooters[HeaderFooterType.HeaderEven];
+                    if (header != null)
+                        header.Remove();
+                }
+                TempDoc.Save(FolderName + guid + ".pdf", Aspose.Words.SaveFormat.Pdf);
+                Aspose.Pdf.Document PdfDocument = new Aspose.Pdf.Document(FolderName + guid + ".pdf");
+                foreach (Aspose.Pdf.Page p in PdfDocument.Pages)
+                {
+                    if (p.IsBlank(0.01))
+                    {
+                        flag = true;
+                        lstBlankPages.Add(p.Number);
+                    }
+                }
+                File.Delete(FolderName + guid + ".pdf");
+                if (flag == true)
+                {
+                    List<int> lst2 = lstBlankPages.Distinct().ToList();
+                    if (lst2.Count > 0)
+                    {
+                        lst2.Sort();
+                        Pagenumber = string.Join(", ", lst2.ToArray());
+                        rObj.QC_Result = "Failed";
+                        rObj.Comments = "Blank Page are found in updated document at Page Numbers: " + Pagenumber;
+                    }
+                }
+                else
+                {
+                    rObj.QC_Result = "Passed";
+                    rObj.Comments = "Blank pages does not Exist in updated document.";
+                }
+                rObj.CHECK_END_TIME = DateTime.Now;
+            }
+            catch (Exception ex)
+            {
+                ErrorLogger.Error("JOB_ID:" + rObj.Job_ID + ", CHECK NAME: " + rObj.Check_Name + "\n" + ex);
+                rObj.Job_Status = "Error";
+                rObj.QC_Result = "Error";
+                rObj.Comments = "Technical error: " + ex.Message;
+            }
+
+        }
+        /// <summary>
+        /// No Widow and Orphaned headings - check
+        /// </summary>
+        /// <param name="rObj"></param>
+        /// <param name="doc"></param>
+        public void CheckAndFixOrphans(RegOpsQC rObj, Document doc)
+        {
+            rObj.QC_Result = string.Empty;
+            rObj.Comments = string.Empty;
+            string Pagenumber = string.Empty;
+            bool flag = false;
+            rObj.CHECK_START_TIME = DateTime.Now;
+            try
+            {
+                List<int> lst = new List<int>();
+                LayoutCollector layout = new LayoutCollector(doc);
+                foreach (Paragraph pr in doc.GetChildNodes(NodeType.Paragraph, true))
+                {
+                    if (pr.ParagraphFormat.WidowControl == false)
+                    {
+                        flag = true;
+                        if (pr.LastChild != null && layout.GetStartPageIndex(pr.LastChild) != 0)
+                            lst.Add(layout.GetStartPageIndex(pr.LastChild));
+                        else if (layout.GetStartPageIndex(pr) != 0)
+                            lst.Add(layout.GetStartPageIndex(pr));
+                    }
+                }
+                if (flag == false)
+                {
+                    rObj.QC_Result = "Passed";
+                    rObj.Comments = "Orphaned headings not exist.";
+                }
+                else
+                {
+                    List<int> lst2 = lst.Distinct().ToList();
+                    if (lst2.Count > 0)
+                    {
+                        lst2.Sort();
+                        Pagenumber = string.Join(", ", lst2.ToArray());
+                        rObj.QC_Result = "Failed";
+                        rObj.Comments = "Orphaned headings are in Page Numbers: " + Pagenumber;
+                    }
+                }
+                rObj.CHECK_END_TIME = DateTime.Now;
+            }
+            catch (Exception ex)
+            {
+                ErrorLogger.Error("JOB_ID:" + rObj.Job_ID + ", CHECK NAME: " + rObj.Check_Name + "\n" + ex);
+                rObj.Job_Status = "Error";
+                rObj.QC_Result = "Error";
+                rObj.Comments = "Technical error: " + ex.Message;
+            }
+        }
+
+        /// <summary>
+        /// No Widow and Orphaned headings - fix
+        /// </summary>
+        /// <param name="rObj"></param>
+        /// <param name="doc"></param>
+        public void FixCheckAndFixOrphans(RegOpsQC rObj, Document doc)
+        {
+            rObj.QC_Result = string.Empty;
+            rObj.CHECK_START_TIME = DateTime.Now;
+            bool FixFlag = false;
+            try
+            {
+                List<int> lst = new List<int>();
+                doc = new Document(rObj.DestFilePath);
+                LayoutCollector layout = new LayoutCollector(doc);
+                foreach (Paragraph pr in doc.GetChildNodes(NodeType.Paragraph, true))
+                {
+                    if (pr.ParagraphFormat.WidowControl == false)
+                    {
+                        FixFlag = true;
+                        pr.ParagraphFormat.WidowControl = true;
+                    }
+                }
+                if (FixFlag == true)
+                {
+                    rObj.QC_Result = "Fixed";
+                    rObj.Comments = rObj.Comments + ".These are fixed";
+                }
+                else
+                {
+                    rObj.QC_Result = "Fixed";
+                    rObj.Comments = "Orphaned headings fixed";
+                }
+
+                doc.UpdateFields();
+                doc.Save(rObj.DestFilePath);
+                rObj.CHECK_END_TIME = DateTime.Now;
+            }
+            catch (Exception ex)
+            {
+                ErrorLogger.Error("JOB_ID:" + rObj.Job_ID + ", CHECK NAME: " + rObj.Check_Name + "\n" + ex);
+                rObj.Job_Status = "Error";
+                rObj.QC_Result = "Error";
+                rObj.Comments = "Technical error: " + ex.Message;
+            }
+        }
+
+        /// <summary>
+        /// Verify for existence of any hidden text - check
+        /// </summary>
+        /// <param name="rObj"></param>
+        /// <param name="doc"></param>
+        public void HiddenText(RegOpsQC rObj, Document doc)
+        {
+            string Pagenumber = string.Empty;
+            rObj.QC_Result = string.Empty;
+            rObj.Comments = string.Empty;
+            rObj.CHECK_START_TIME = DateTime.Now;
+            try
+            {
+                LayoutCollector layout = new LayoutCollector(doc);
+                List<int> lst = new List<int>();
+                NodeCollection runs = doc.GetChildNodes(NodeType.Run, true);
+                foreach (Run run in runs.OfType<Run>())
+                {
+                    if (run.Font.Hidden == true)
+                    {
+                        rObj.Comments = "Hidden Text Exist.";
+                        if (layout.GetStartPageIndex(run) != 0)
+                            lst.Add(layout.GetStartPageIndex(run));
+                    }
+                }
+                List<int> lst1 = lst.Distinct().ToList();
+                if (lst1.Count > 0)
+                {
+                    lst1.Sort();
+                    Pagenumber = string.Join(", ", lst1.ToArray());
+                    rObj.QC_Result = "Failed";
+                    rObj.Comments = "Hidden Text Exist in Page Numbers: " + Pagenumber;
+                }
+                else
+                {
+                    rObj.QC_Result = "Passed";
+                    rObj.Comments = "Hidden Text does not Exist.";
+                }
+                rObj.CHECK_END_TIME = DateTime.Now;
+            }
+            catch (Exception ex)
+            {
+                ErrorLogger.Error("JOB_ID:" + rObj.Job_ID + ", CHECK NAME: " + rObj.Check_Name + "\n" + ex);
+                rObj.Job_Status = "Error";
+                rObj.QC_Result = "Error";
+                rObj.Comments = "Technical error: " + ex.Message;
+            }
+        }
+
+        /// <summary>
+        /// Use "Link to Previous" in multi section document - check
+        /// </summary>
+        /// <param name="rObj"></param>
+        /// <param name="doc"></param>
+        public void Linktoprevious(RegOpsQC rObj, Document doc)
+        {
+            rObj.QC_Result = string.Empty;
+            rObj.Comments = string.Empty;
+            rObj.CHECK_START_TIME = DateTime.Now;
+            int i = 1;
+            bool linkFlag = true;
+            bool SectionLinkFlag = false;
+            try
+            {
+                string ext = Path.GetExtension(rObj.DestFilePath);
+                if (doc.Sections.Count > 1)
+                {
+                    SectionLinkFlag = true;
+                    foreach (Section section in doc.Sections)
+                    {
+                        if (i != 1)
+                        {
+                            foreach (HeaderFooter hf in section.GetChildNodes(NodeType.HeaderFooter, true))
+                            {
+                                if (hf.IsLinkedToPrevious == false)
+                                {
+                                    linkFlag = false;
+                                    string a = i + ",";
+                                    rObj.Comments = rObj.Comments + a;
+                                    break;
+                                }
+                            }
+                        }
+                        i++;
+                    }
+                }
+                else
+                {
+                    rObj.QC_Result = "Passed";
+                    rObj.Comments = "There is no multiple section(s) to Link.";
+                }
+                if (!linkFlag)
+                {
+                    rObj.QC_Result = "Failed";
+                    rObj.Comments =rObj.Comments.TrimEnd(',');
+                    rObj.Comments = "Not linked to previous option at section(s) " + rObj.Comments;
+                }
+                else if (!SectionLinkFlag)
+                {
+                    rObj.QC_Result = "Passed";
+                    rObj.Comments = "There is no multiple section(s) to Link.";
+                }
+                else
+                {
+                    rObj.QC_Result = "Passed";
+                    rObj.Comments = "All sections are linked to previous";
+                }
+                rObj.CHECK_END_TIME = DateTime.Now;
+            }
+            catch (Exception ex)
+            {
+                ErrorLogger.Error("JOB_ID:" + rObj.Job_ID + ", CHECK NAME: " + rObj.Check_Name + "\n" + ex);
+                rObj.Job_Status = "Error";
+                rObj.QC_Result = "Error";
+                rObj.Comments = "Technical error: " + ex.Message;
+            }
+        }
+
+        /// <summary>
+        /// Use "Link to Previous" in multi section document - fix
+        /// </summary>
+        /// <param name="rObj"></param>
+        /// <param name="doc"></param>
+        public void FixLinktoprevious(RegOpsQC rObj, Document doc)
+        {
+            rObj.QC_Result = string.Empty;
+            rObj.CHECK_START_TIME = DateTime.Now;
+            int i = 0;
+            try
+            {
+                string ext = Path.GetExtension(rObj.DestFilePath);
+                doc = new Document(rObj.DestFilePath);
+                if (doc.Sections.Count > 1)
+                {
+                    foreach (Section section in doc.Sections)
+                    {
+                        if (i != 0)
+                        {
+                            foreach (HeaderFooter hf in section.GetChildNodes(NodeType.HeaderFooter, true))
+                            {
+                                if (hf.IsLinkedToPrevious == false)
+                                {
+                                    hf.IsLinkedToPrevious = true;
+                                }
+                            }
+                        }
+                        i++;
+                    }
+                }
+                rObj.QC_Result = "Fixed";
+                rObj.Comments = rObj.Comments + " .These are fixed.";
+                //   doc.AcceptAllRevisions();
+                doc.Save(rObj.DestFilePath);
+                rObj.CHECK_END_TIME = DateTime.Now;
+            }
+            catch (Exception ex)
+            {
+                ErrorLogger.Error("JOB_ID:" + rObj.Job_ID + ", CHECK NAME: " + rObj.Check_Name + "\n" + ex);
+                rObj.Job_Status = "Error";
+                rObj.QC_Result = "Error";
+                rObj.Comments = "Technical error: " + ex.Message;
+            }
+        }
+
+        /// <summary>
+        /// Check whether TOC,LOT,LOF and LOA are present for above 5 pages - check
+        /// </summary>
+        /// <param name="rObj"></param>
+        /// <param name="doc"></param>
+        public void CheckTOCExists(RegOpsQC rObj, Document doc, List<RegOpsQC> chLst)
+        {
+            rObj.QC_Result = string.Empty;
+            rObj.Comments = string.Empty;
+            bool flag = false;
+            bool Tocfamily = false;
+            rObj.CHECK_START_TIME = DateTime.Now;
+            bool CheckLOT = false;
+            bool CheckLOF = false;
+            bool TableFlag = false;
+            bool FigureFlag = false;
+            Style StylenameToc = null;
+            string CheckStyles = string.Empty;
+            Paragraph TocPr = null;
+            Paragraph LotPr = null;
+            Paragraph LofPr = null;
+            NodeCollection fieldsstart = doc.GetChildNodes(NodeType.FieldStart, true);
+            chLst = chLst.Where(x => x.Parent_Check_ID == rObj.CheckList_ID).ToList();
+            try
+            {
+                int pagecount = doc.PageCount;
+                if (pagecount < 5)
+                {
+                    flag = true;
+                }
+                else
+                {
+                    StyleCollection stylist = doc.Styles;
+                    //paraStyle = stylist.Where(x => x.Name.ToUpper() == "PARAGRAPH").First<Style>();
+                    List<Node> LotLofStyles = doc.GetChildNodes(NodeType.Paragraph, true).Where(x => ((Paragraph)x).ParagraphFormat.StyleName.ToUpper() == "LIST OF FIGURES" || ((Paragraph)x).ParagraphFormat.StyleName.ToUpper() == "LIST OF TABLES" || ((Paragraph)x).ParagraphFormat.StyleName.ToUpper() == "TABLE OF CONTENTS").ToList();
+                    StylenameToc = stylist[0];
+                    List<Node> TocPAra = doc.GetChildNodes(NodeType.Paragraph, true).Where(x => (x.Range.Text.Trim().ToUpper() == "TABLE OF CONTENTS" || x.Range.Text.Trim().ToUpper() == "LIST OF FIGURES" || x.Range.Text.Trim().ToUpper() == "LIST OF TABLES")).ToList();
+                    foreach (Paragraph pr in TocPAra)
+                    {
+                        if (pr.Range.Text.Trim().ToUpper() == "TABLE OF CONTENTS")
+                            TocPr = pr;
+                        if (pr.Range.Text.Trim().ToUpper() == "LIST OF TABLES")
+                            LotPr = pr;
+                        if (pr.Range.Text.Trim().ToUpper() == "LIST OF FIGURES")
+                            LofPr = pr;
+                    }
+                    foreach (Paragraph pr in LotLofStyles)
+                    {
+                        if (!pr.Range.Text.Trim().ToUpper().Contains("LIST OF FIGURES") && !pr.Range.Text.Trim().ToUpper().Contains("LIST OF TABLES") && !pr.Range.Text.Trim().ToUpper().Contains("TABLE OF CONTENTS"))
+                        {
+                            if (stylist.Where(x => x.Name.ToUpper() == "PARAGRAPH").Count() == 0)
+                                pr.ParagraphFormat.StyleName = "Paragraph";
+                        }
+                           
+                    }
+                    List<Node> fieldnodes = doc.GetChildNodes(NodeType.Any, true).Where(x => (x.NodeType == NodeType.FieldStart)).ToList();
+                    foreach (Node nd in fieldnodes)
+                    {
+                        if (((FieldStart)nd).FieldType == FieldType.FieldSequence)
+                        {
+                            if (nd.ParentNode.Range.Text.Trim().ToUpper().Contains("TABLE"))
+                                TableFlag = true;
+                            else if (nd.ParentNode.Range.Text.Trim().ToUpper().Contains("FIGURE"))
+                                FigureFlag = true;
+                        }
+                        if (((FieldStart)nd).FieldType == FieldType.FieldTOC)
+                        {
+                            if (!nd.ParentNode.Range.Text.Trim().ToUpper().Contains("\"FIGURE\"") && !nd.ParentNode.Range.Text.Trim().ToUpper().Contains("\"TABLE\""))
+                            {
+                                if (TocPr == null && nd.ParentNode.PreviousSibling != null && nd.ParentNode.PreviousSibling.Range.Text.Trim().ToUpper().Contains("TABLE OF CONTENTS"))
+                                    TocPr = (Paragraph)nd.ParentNode.PreviousSibling;
+                                Tocfamily = true;
+                            }
+                            else if (nd.ParentNode.Range.Text.Trim().ToUpper().Contains("\"TABLE\""))
+                            {
+                                if (LotPr == null && nd.ParentNode.PreviousSibling != null && nd.ParentNode.PreviousSibling.Range.Text.Trim().ToUpper().Contains("LIST OF TABLES"))
+                                    LotPr = (Paragraph)nd.ParentNode.PreviousSibling;
+                                CheckLOT = true;
+                            }
+                            else if (nd.ParentNode.Range.Text.Trim().ToUpper().Contains("\"FIGURE\""))
+                            {
+                                if (LofPr == null && nd.ParentNode.PreviousSibling != null && nd.ParentNode.PreviousSibling.Range.Text.Trim().ToUpper().Contains("LIST OF FIGURES"))
+                                    LofPr = (Paragraph)nd.ParentNode.PreviousSibling;
+                                CheckLOF = true;
+                            }
+                        }
+                    }
+                }
+                if (flag == true)
+                {
+                    rObj.QC_Result = "Passed";
+                    rObj.Comments = "TOC,LOT and LOF are not required for document with below 5 pages";
+                    // doc.UpdateFields();
+                    //doc.UpdatePageLayout();
+                }
+                else if (Tocfamily == true && CheckLOT == true && CheckLOF == true)
+                {
+                    //  doc.UpdateFields();
+                    //doc.Save(rObj.DestFilePath);
+                    //  doc = new Document(rObj.DestFilePath);
+                    rObj.QC_Result = "Passed";
+                    rObj.Comments = "TOC,LOT and LOF are present for 5 or above 5 pages";
+                    // doc.UpdateFields();
+                    //doc.UpdatePageLayout();
+                }
+                else if (Tocfamily == false && CheckLOT == false && FigureFlag == true && TableFlag == true && CheckLOF == false)
+                {
+                    rObj.QC_Result = "Failed";
+                    rObj.Comments = "TOC,LOT and LOF are not present";
+                }
+                else if (Tocfamily == false && CheckLOT == false && TableFlag == true && CheckLOF == true)
+                {
+                    rObj.QC_Result = "Failed";
+                    rObj.Comments = "TOC and LOT are not present";
+                }
+                else if (Tocfamily == false && CheckLOT == true && CheckLOF == false && FigureFlag == true)
+                {
+                    rObj.QC_Result = "Failed";
+                    rObj.Comments = "TOC and LOF are not present";
+                }
+                else if (Tocfamily == true && CheckLOT == false && FigureFlag == true && TableFlag == true && CheckLOF == false)
+                {
+                    rObj.QC_Result = "Failed";
+                    rObj.Comments = "LOT and LOF are not present";
+                }
+                else if (Tocfamily == true && CheckLOT == true && FigureFlag == false && CheckLOF == false)
+                {
+                    rObj.QC_Result = "Passed";
+                    rObj.Comments = "TOC and LOT are present";
+                    //doc.UpdateFields();
+                    //doc.UpdatePageLayout();
+                }
+                else if (Tocfamily == true && CheckLOT == false && TableFlag == false && CheckLOF == true)
+                {
+                    rObj.QC_Result = "Passed";
+                    rObj.Comments = "TOC and LOF are present";
+                    // doc.UpdateFields();
+                    //doc.UpdatePageLayout();
+                }
+                else if (Tocfamily == true && CheckLOT == false && TableFlag == false && CheckLOF == false && FigureFlag == false)
+                {
+                    rObj.QC_Result = "Passed";
+                    rObj.Comments = "TOC present";
+                    // doc.UpdateFields();
+                    // doc.UpdatePageLayout();
+                }
+                else if (Tocfamily == false)
+                {
+                    rObj.QC_Result = "Failed";
+                    rObj.Comments = "TOC not present.";
+                }
+                else if (CheckLOT == false && TableFlag == true)
+                {
+                    rObj.QC_Result = "Failed";
+                    rObj.Comments = "LOT not present.";
+                }
+                else if (CheckLOF == false && FigureFlag == true)
+                {
+                    rObj.QC_Result = "Failed";
+                    rObj.Comments = "LOF not present.";
+                }
+                else
+                {
+                    rObj.QC_Result = "Passed";
+                    rObj.Comments = "This Check is passed";
+                    //doc.UpdateTableLayout();
+                    //doc.UpdateFields();
+
+                    //  doc.Save(rObj.DestFilePath);
+                    //doc = new Document(rObj.DestFilePath);
+                }
+                if (rObj.QC_Result == "Passed" && rObj.Comments != "TOC,LOT and LOF are not required for document with below 5 pages")
+                {
+                    rObj.Comments = rObj.Comments + ",given styles will not applied for existng TOC";
+                    //for (int k = 0; k < chLst.Count; k++)
+                    //{
+                    //    chLst[k].Parent_Checklist_ID = rObj.CheckList_ID;
+                    //    chLst[k].JID = rObj.JID;
+                    //    chLst[k].Job_ID = rObj.Job_ID;
+                    //    chLst[k].Folder_Name = rObj.Folder_Name;
+                    //    chLst[k].File_Name = rObj.File_Name;
+                    //    chLst[k].Created_ID = rObj.Created_ID;
+                    //    if (chLst[k].Check_Name == "Font Family")
+                    //    {
+                    //        StylenameToc.Font.Name = chLst[k].Check_Parameter.ToString();
+                    //    }
+                    //    else if (chLst[k].Check_Name == "Font Style")
+                    //    {
+                    //        if (chLst[k].Check_Parameter == "Bold")
+                    //        {
+                    //            StylenameToc.Font.Bold = true;
+                    //            StylenameToc.Font.Italic = false;
+                    //        }
+                    //        if (chLst[k].Check_Parameter == "Regular")
+                    //        {
+                    //            StylenameToc.Font.Bold = false;
+                    //            StylenameToc.Font.Italic = false;
+                    //        }
+                    //        if (chLst[k].Check_Parameter == "Italic")
+                    //        {
+                    //            StylenameToc.Font.Bold = false;
+                    //            StylenameToc.Font.Italic = true;
+                    //        }
+                    //        if (chLst[k].Check_Parameter == "Bold Italic")
+                    //        {
+                    //            StylenameToc.Font.Bold = true;
+                    //            StylenameToc.Font.Italic = true;
+                    //        }
+                    //    }
+                    //    else if (chLst[k].Check_Name == "Font Size")
+                    //    {
+                    //        StylenameToc.Font.Size = Convert.ToDouble(chLst[k].Check_Parameter);
+                    //    }
+                    //    else if (chLst[k].Check_Name == "Font Color")
+                    //    {
+                    //        Color color1 = GetSystemDrawingColorFromHexString(chLst[k].Check_Parameter);
+                    //        StylenameToc.Font.Color = color1;
+                    //    }
+                    //    else if (chLst[k].Check_Name == "\"Table of Contents\" Heading Style" && chLst[k].Check_Type == 1)
+                    //    {
+                    //        Style Stylename = doc.Styles.Where(x => ((Style)x).Name == chLst[k].Check_Parameter.ToString()).FirstOrDefault<Style>();// ToList<Style>();                               
+                    //        if (Stylename != null && TocPr != null)
+                    //            TocPr.ParagraphFormat.Style = Stylename;
+                    //        else
+                    //            CheckStyles = CheckStyles + chLst[k].Check_Parameter + ",";
+                    //    }
+                    //    else if (chLst[k].Check_Name == "\"List of Tables\" Heading Style" && chLst[k].Check_Type == 1)
+                    //    {
+                    //        Style Stylename = doc.Styles.Where(x => ((Style)x).Name == chLst[k].Check_Parameter.ToString()).FirstOrDefault<Style>();// ToList<Style>();                               
+                    //        if (Stylename != null && LotPr != null)
+                    //            LotPr.ParagraphFormat.Style = Stylename;
+                    //        else
+                    //            CheckStyles = CheckStyles + chLst[k].Check_Parameter + ",";
+                    //    }
+                    //    else if (chLst[k].Check_Name == "\"List of Figures\" Heading Style" && chLst[k].Check_Type == 1)
+                    //    {
+                    //        Style Stylename = doc.Styles.Where(x => ((Style)x).Name == chLst[k].Check_Parameter.ToString()).FirstOrDefault<Style>();// ToList<Style>();                               
+                    //        if (Stylename != null && LofPr != null)
+                    //            LofPr.ParagraphFormat.Style = Stylename;
+                    //        else
+                    //            CheckStyles = CheckStyles + chLst[k].Check_Parameter + ",";
+                    //    }
+                    //}
+                    //List<Node> fieldnodes = doc.GetChildNodes(NodeType.Any, true).Where(x => (x.NodeType == NodeType.FieldStart)).ToList();
+                    //foreach (Node nd in fieldnodes)
+                    //{
+                    //    if (((FieldStart)nd).FieldType == FieldType.FieldTOC)
+                    //    {
+                    //        Paragraph pr = (Paragraph)nd.ParentNode;
+                    //      //  pr.ParagraphFormat.Style.Font.Color = StylenameToc.Font.Color;
+                    //        pr.ParagraphFormat.Style.Font.Name = StylenameToc.Font.Name;
+                    //        pr.ParagraphFormat.Style.Font.Size = StylenameToc.Font.Size;
+                    //        pr.ParagraphFormat.Style.Font.Bold = StylenameToc.Font.Bold;                        
+                    //        pr.ParagraphFormat.Style.Font.Italic = StylenameToc.Font.Italic;                           
+                    //        if (!rObj.Comments.Contains("given styles applied"))
+                    //        {
+                    //            rObj.Comments = rObj.Comments + ",given styles applied";
+                    //            if (CheckStyles != null && CheckStyles != "")
+                    //            {
+                    //                CheckStyles = CheckStyles.Substring(0, CheckStyles.Length - 1);
+                    //                rObj.Comments = rObj.Comments + "," + CheckStyles + " styles not exist in the document.";
+                    //            }
+                    //        }
+                    //    }
+                    //}
+                    //foreach (Paragraph para in doc.GetChildNodes(NodeType.Paragraph, true).Where(x => ((Paragraph)x).ParagraphFormat.StyleIdentifier == StyleIdentifier.Toc1 || ((Paragraph)x).ParagraphFormat.StyleIdentifier == StyleIdentifier.Toc2 || ((Paragraph)x).ParagraphFormat.StyleIdentifier == StyleIdentifier.Toc3 || ((Paragraph)x).ParagraphFormat.StyleIdentifier == StyleIdentifier.Toc4 || ((Paragraph)x).ParagraphFormat.StyleIdentifier == StyleIdentifier.Toc5 || ((Paragraph)x).ParagraphFormat.StyleIdentifier == StyleIdentifier.Toc6 || ((Paragraph)x).ParagraphFormat.StyleIdentifier == StyleIdentifier.Toc7 || ((Paragraph)x).ParagraphFormat.StyleIdentifier == StyleIdentifier.Toc8 || ((Paragraph)x).ParagraphFormat.StyleIdentifier == StyleIdentifier.Toc9 || ((Paragraph)x).ParagraphFormat.StyleIdentifier == StyleIdentifier.TableOfFigures))
+                    //{
+                    //   // para.ParagraphFormat.Style.Font.Color = StylenameToc.Font.Color;
+                    //    para.ParagraphFormat.Style.Font.Name = StylenameToc.Font.Name;
+                    //    para.ParagraphFormat.Style.Font.Size = StylenameToc.Font.Size;
+                    //    para.ParagraphFormat.Style.Font.Bold = StylenameToc.Font.Bold;
+                    //    para.ParagraphFormat.Style.Font.Italic = StylenameToc.Font.Italic;
+                    //}
+                    // doc.UpdateFields();
+                    // doc.UpdatePageLayout();
+                    //doc.Save(rObj.DestFilePath);
+                    //doc = new Document(rObj.DestFilePath);
+                }
+                rObj.CHECK_END_TIME = DateTime.Now;
+            }
+            catch (Exception ex)
+            {
+                ErrorLogger.Error("JOB_ID:" + rObj.Job_ID + ", CHECK NAME: " + rObj.Check_Name + "\n" + ex);
+                rObj.Job_Status = "Error";
+                rObj.QC_Result = "Error";
+                rObj.Comments = "Technical error: " + ex.Message;
+            }
+        }
+        private System.Drawing.Color GetSystemDrawingColorFromHexString(string hexString)
+        {
+            if (!System.Text.RegularExpressions.Regex.IsMatch(hexString, @"[#]([0-9]|[a-f]|[A-F]){6}\b"))
+                throw new ArgumentException();
+            int red = int.Parse(hexString.Substring(1, 2), System.Globalization.NumberStyles.HexNumber);
+            int green = int.Parse(hexString.Substring(3, 2), System.Globalization.NumberStyles.HexNumber);
+            int blue = int.Parse(hexString.Substring(5, 2), System.Globalization.NumberStyles.HexNumber);
+            return Color.FromArgb(red, green, blue);
+        }
+        /// <summary>
+        /// Check whether TOC,LOT,LOF and LOA are present for above 5 pages - fix
+        /// </summary>
+        /// <param name="rObj"></param>
+        /// <param name="doc"></param>
+        public void FixTOC(RegOpsQC rObj, Document doc, List<RegOpsQC> chLst)
+        {
+            string res = string.Empty;
+            bool Tocfamily = false;
+            Style paraStyleTOC = null;
+            Style paraStyleLOF = null;
+            Style paraStyleLOT = null;
+            bool TableFlag = false;
+            bool FigureFlag = false;
+            bool CheckLOT = false;
+            bool CheckLOF = false;
+            bool CheckHeading = false;
+            bool FixToc = false;
+            bool FixLot = false;
+            bool FixLof = false;
+            bool Tocbold = false;
+            bool Tocitalic = false;
+            double Tocsize = 0;
+            string toccolor = string.Empty;
+            string Tocstyname = string.Empty;
+            string CheckStyles = string.Empty;
+            rObj.CHECK_START_TIME = DateTime.Now;
+            Style StylenameToc = null;
+            string Tocposition = string.Empty;
+            bool TOCstyle = true;
+            bool LOTstyle = true;
+            bool LOFstyle = true;
+            try
+            {
+                doc = new Document(rObj.DestFilePath);
+                // to get sub check list
+                chLst = chLst.Where(x => x.Parent_Check_ID == rObj.CheckList_ID).ToList();
+                Style paraStyle = null;
+                StyleCollection stylist = doc.Styles;
+                if (stylist.Where(x => x.Name.ToUpper() == "PARAGRAPH").Count() == 0)
+                    paraStyle = stylist.Where(x => x.Name.ToUpper() == "PARAGRAPH").First<Style>();
+                StylenameToc = stylist.Where(x => x.StyleIdentifier == StyleIdentifier.Hyperlink).First<Style>();
+                int pagecount = doc.PageCount;
+                NodeCollection paragraphs = doc.GetChildNodes(NodeType.Paragraph, true);
+                List<Node> fieldnodes = doc.GetChildNodes(NodeType.Any, true).Where(x => (x.NodeType == NodeType.FieldStart)).ToList();
+                foreach (Node nd in fieldnodes)
+                {
+                    if (((FieldStart)nd).FieldType == FieldType.FieldSequence)
+                    {
+                        if (nd.ParentNode.Range.Text.Trim().ToUpper().Contains("TABLE") && TableFlag != true)
+                            TableFlag = true;
+                        else if (nd.ParentNode.Range.Text.Trim().ToUpper().Contains("FIGURE") && FigureFlag != true)
+                            FigureFlag = true;
+                    }
+                    if (((FieldStart)nd).FieldType == FieldType.FieldTOC)
+                    {
+                        if (!nd.ParentNode.Range.Text.Trim().ToUpper().Contains("\"FIGURE\"") && !nd.ParentNode.Range.Text.Trim().ToUpper().Contains("\"TABLE\""))
+                        {
+                            Tocfamily = true;
+                        }
+                        else if (nd.ParentNode.Range.Text.Trim().ToUpper().Contains("\"TABLE\""))
+                        {
+                            CheckLOT = true;
+                        }
+                        else if (nd.ParentNode.Range.Text.Trim().ToUpper().Contains("\"FIGURE\""))
+                        {
+                            CheckLOF = true;
+                        }
+                    }
+                }
+                for (int k = 0; k < chLst.Count; k++)
+                {
+                    chLst[k].Parent_Checklist_ID = rObj.CheckList_ID;
+                    chLst[k].JID = rObj.JID;
+                    chLst[k].Job_ID = rObj.Job_ID;
+                    chLst[k].Folder_Name = rObj.Folder_Name;
+                    chLst[k].File_Name = rObj.File_Name;
+                    chLst[k].Created_ID = rObj.Created_ID;
+                    if (chLst[k].Check_Name == "Font Family")
+                    {
+                        Tocstyname = chLst[k].Check_Parameter.ToString();
+                    }
+                    else if (chLst[k].Check_Name == "Font Style")
+                    {
+                        if (chLst[k].Check_Parameter == "Bold")
+                        {
+                            Tocbold = true;
+                            Tocitalic = false;
+                        }
+                        if (chLst[k].Check_Parameter == "Regular")
+                        {
+                            Tocbold = false;
+                            Tocitalic = false;
+                        }
+                        if (chLst[k].Check_Parameter == "Italic")
+                        {
+                            Tocbold = false;
+                            Tocitalic = true;
+                        }
+                        if (chLst[k].Check_Parameter == "Bold Italic")
+                        {
+                            Tocbold = true;
+                            Tocitalic = true;
+                        }
+                    }
+                    else if (chLst[k].Check_Name == "Font Size")
+                    {
+                        Tocsize = Convert.ToDouble(chLst[k].Check_Parameter);
+                    }
+                    else if (chLst[k].Check_Name == "Font Color")
+                    {
+                        toccolor = chLst[k].Check_Parameter;
+                    }
+                    else if (chLst[k].Check_Name == "\"Table of Contents\" Heading Style" && chLst[k].Check_Type == 1)
+                    {
+                        Style Stylename = doc.Styles.Where(x => ((Style)x).Name.ToUpper() == chLst[k].Check_Parameter.ToString().ToUpper()).FirstOrDefault<Style>();// ToList<Style>();                               
+                        if (Stylename == null)
+                            Stylename = doc.Styles.Where(x => ((Style)x).StyleIdentifier.ToString().ToUpper() == chLst[k].Check_Parameter.ToString().ToUpper()).FirstOrDefault<Style>();
+                        if (Stylename == null)
+                        {
+                            CheckStyles = CheckStyles + chLst[k].Check_Parameter + ",";
+                            TOCstyle = false;
+                        }
+                    }
+                    else if (chLst[k].Check_Name == "\"List of Tables\" Heading Style" && chLst[k].Check_Type == 1)
+                    {
+                        Style Stylename = doc.Styles.Where(x => ((Style)x).Name.ToUpper() == chLst[k].Check_Parameter.ToString().ToUpper()).FirstOrDefault<Style>();// ToList<Style>();                               
+                        if (Stylename == null)
+                            Stylename = doc.Styles.Where(x => ((Style)x).StyleIdentifier.ToString().ToUpper() == chLst[k].Check_Parameter.ToString().ToUpper()).FirstOrDefault<Style>();
+                        if (Stylename == null)
+                        {
+                            CheckStyles = CheckStyles + chLst[k].Check_Parameter + ",";
+                            LOTstyle = false;
+                        }
+                    }
+                    else if (chLst[k].Check_Name == "\"List of Figures\" Heading Style" && chLst[k].Check_Type == 1)
+                    {
+                        Style Stylename = doc.Styles.Where(x => ((Style)x).Name.ToUpper() == chLst[k].Check_Parameter.ToString().ToUpper()).FirstOrDefault<Style>();// ToList<Style>();   
+                        if (Stylename == null)
+                            Stylename = doc.Styles.Where(x => ((Style)x).StyleIdentifier.ToString().ToUpper() == chLst[k].Check_Parameter.ToString().ToUpper()).FirstOrDefault<Style>();
+                        if (Stylename == null)
+                        {
+                            CheckStyles = CheckStyles + chLst[k].Check_Parameter + ",";
+                            LOFstyle = false;
+                        }
+                    }
+                    else if (chLst[k].Check_Name == "TOC starts from")
+                    {
+                        Tocposition = chLst[k].Check_Parameter;
+                    }
+                }
+                if (Tocfamily == false)
+                {
+                    Node heading = null;
+                    DocumentBuilder builder = new DocumentBuilder(doc);
+                    if (CheckLOF == true || CheckLOT == true)
+                    {
+                        List<Node> Checkfieldsnodes = doc.GetChildNodes(NodeType.Any, true).Where(x => (x.NodeType == NodeType.FieldStart)).ToList();
+                        foreach (Node nd in Checkfieldsnodes)
+                        {
+                            if (((FieldStart)nd).FieldType == FieldType.FieldTOC)
+                            {
+                                if (nd.ParentNode.PreviousSibling == null || nd.ParentNode.PreviousSibling.PreviousSibling == null)
+                                {
+                                    Paragraph pr = new Paragraph(doc);
+                                    doc.Sections[0].Body.PrependChild(pr);
+                                    builder.MoveTo(pr);
+                                    break;
+                                }
+                                else
+                                {
+                                    heading = nd.ParentNode.PreviousSibling.PreviousSibling;
+                                    builder.MoveTo(heading);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    if (CheckLOF == false && CheckLOT == false)
+                    {
+                        if (Tocposition == "Page 1")
+                        {
+                            CheckHeading = true;
+                            Paragraph pr = new Paragraph(doc);
+                            doc.Sections[0].Body.PrependChild(pr);
+                            builder.MoveTo(pr);
+                        }
+                        else
+                        {
+                            foreach (Paragraph pr1 in paragraphs)
+                            {
+                                if (pr1.ParagraphFormat.StyleIdentifier == StyleIdentifier.Heading1 || pr1.ParagraphFormat.StyleName.ToUpper() == "HEADING 1 UNNUMBERED" || pr1.ParagraphFormat.StyleName.ToUpper() == "HEADING 1 NOTOC")
+                                {
+                                    CheckHeading = true;
+                                    if (pr1.PreviousSibling == null)
+                                    {
+                                        Paragraph pr = new Paragraph(doc);
+                                        pr1.ParentSection.Body.PrependChild(pr);
+                                        builder.MoveTo(pr);
+                                        break;
+                                    }
+                                    else
+                                    {
+                                        if (pr1.PreviousSibling.NodeType == NodeType.Table)
+                                        {
+                                            Table table = (Table)pr1.PreviousSibling;
+                                            if (table.NextSibling.ToString(SaveFormat.Text).Trim() != null && table.NextSibling.ToString(SaveFormat.Text).Trim() != "")
+                                            {
+                                                Paragraph par = new Paragraph(doc);
+                                                table.ParentNode.InsertAfter(par, table);
+                                                builder.MoveTo(par);
+                                            }
+                                        }
+                                        else
+                                        {
+                                            heading = pr1.PreviousSibling;
+                                            Paragraph par = new Paragraph(doc);
+                                            pr1.ParentNode.InsertBefore(par, pr1);
+                                            builder.MoveTo(par);
+                                        }
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        if (CheckHeading == false)
+                        {
+                            Paragraph pr = new Paragraph(doc);
+                            doc.Sections[0].Body.PrependChild(pr);
+                            builder.MoveTo(pr);
+                        }
+                    }
+                    if (chLst.Count > 0)
+                    {
+                        for (int k = 0; k < chLst.Count; k++)
+                        {
+                            chLst[k].Parent_Checklist_ID = rObj.CheckList_ID;
+                            chLst[k].JID = rObj.JID;
+                            chLst[k].Job_ID = rObj.Job_ID;
+                            chLst[k].Folder_Name = rObj.Folder_Name;
+                            chLst[k].File_Name = rObj.File_Name;
+                            chLst[k].Created_ID = rObj.Created_ID;
+                            if (chLst[k].Check_Name == "\"Table of Contents\" Heading Style" && chLst[k].Check_Type == 1)
+                            {
+                                Style Stylename = doc.Styles.Where(x => ((Style)x).Name.ToUpper() == chLst[k].Check_Parameter.ToString().ToUpper()).FirstOrDefault<Style>();// ToList<Style>();                               
+                                if (Stylename == null)
+                                    Stylename = doc.Styles.Where(x => ((Style)x).StyleIdentifier.ToString().ToUpper() == chLst[k].Check_Parameter.ToString().ToUpper()).FirstOrDefault<Style>();// ToList<Style>();                               
+                                if (Stylename != null)
+                                {
+                                    builder.ParagraphFormat.Style = Stylename;
+                                    builder.ParagraphFormat.Alignment = ParagraphAlignment.Center;
+                                    builder.Writeln("TABLE OF CONTENTS");
+                                    builder.CurrentParagraph.ParagraphFormat.ClearFormatting();
+                                    builder.InsertTableOfContents("TOC \\o \"1-3\" \\h \\z \\u");
+                                    if ((CheckLOF == false && CheckLOT == false && TableFlag == false && FigureFlag == false) || (LOTstyle==false && LOFstyle==false))
+                                    {
+                                        if (doc.Sections[0].PageSetup.Orientation == Orientation.Landscape)
+                                        {
+                                            builder.CurrentSection.PageSetup.Orientation = Orientation.Portrait;
+                                            builder.InsertBreak(BreakType.SectionBreakNewPage);
+                                            builder.CurrentSection.PageSetup.Orientation = Orientation.Landscape;
+                                        }
+                                        else
+                                            builder.InsertBreak(BreakType.PageBreak);
+                                        builder.CurrentParagraph.ParagraphFormat.ClearFormatting();
+                                        if (paraStyle != null)
+                                            builder.CurrentParagraph.ParagraphFormat.Style = paraStyle;
+                                    }
+                                    FixToc = true;
+                                }
+                            }
+                            if (chLst[k].Check_Name == "\"List of Tables\" Heading Style" && chLst[k].Check_Type == 1 && CheckLOT == false && TableFlag == true)
+                            {
+                                Style Stylename = doc.Styles.Where(x => ((Style)x).Name.ToUpper() == chLst[k].Check_Parameter.ToString().ToUpper()).FirstOrDefault<Style>();// ToList<Style>();                               
+                                if (Stylename == null)
+                                    Stylename = doc.Styles.Where(x => ((Style)x).StyleIdentifier.ToString().ToUpper() == chLst[k].Check_Parameter.ToString().ToUpper()).FirstOrDefault<Style>();// ToList<Style>();                               
+                                if (Stylename != null)
+                                {
+                                    builder.ParagraphFormat.Style = Stylename;
+                                    builder.ParagraphFormat.Alignment = ParagraphAlignment.Center;
+                                    builder.Writeln("LIST OF TABLES");
+                                    builder.CurrentParagraph.ParagraphFormat.ClearFormatting();
+                                    builder.InsertTableOfContents("TOC \\h \\z \\c \"Table\"");
+                                    if ((!(CheckLOF == true || (FigureFlag == true && CheckLOF == false))) || LOFstyle==false)
+                                    {
+                                        if (doc.Sections[0].PageSetup.Orientation == Orientation.Landscape)
+                                        {
+                                            builder.CurrentSection.PageSetup.Orientation = Orientation.Portrait;
+                                            builder.InsertBreak(BreakType.SectionBreakNewPage);
+                                            builder.CurrentSection.PageSetup.Orientation = Orientation.Landscape;
+                                        }
+                                        else
+                                            builder.InsertBreak(BreakType.PageBreak);
+                                        builder.CurrentParagraph.ParagraphFormat.ClearFormatting();
+                                        if (paraStyle != null)
+                                            builder.CurrentParagraph.ParagraphFormat.Style = paraStyle;
+                                    }
+                                    FixLot = true;
+                                }
+
+                            }
+                            if (chLst[k].Check_Name == "\"List of Figures\" Heading Style" && chLst[k].Check_Type == 1 && CheckLOF == false && FigureFlag == true)
+                            {
+                                bool isLotExist = false;
+                                Node TOCEndNode = null;
+                                paraStyleLOF = null;
+                                if (CheckLOT == true)
+                                {
+                                    List<Node> FieldNodes = doc.GetChildNodes(NodeType.Any, true).Where(x => (x.NodeType == NodeType.FieldStart || x.NodeType == NodeType.FieldEnd)).ToList();
+                                    foreach (Node start in FieldNodes)
+                                    {
+                                        if (!isLotExist && start.NodeType == NodeType.FieldStart && ((FieldStart)start).FieldType == FieldType.FieldTOC)
+                                        {
+                                            if (start.ParentNode.Range.Text.Trim().ToUpper().Contains("\"TABLE\""))
+                                            {
+                                                isLotExist = true;
+                                            }
+                                        }
+                                        if (isLotExist && start.NodeType == NodeType.FieldEnd && ((FieldEnd)start).FieldType == FieldType.FieldTOC)
+                                        {
+                                            TOCEndNode = start;
+                                            break;
+                                        }
+                                    }
+                                }
+                                Style Stylename = doc.Styles.Where(x => ((Style)x).Name.ToUpper() == chLst[k].Check_Parameter.ToString().ToUpper()).FirstOrDefault<Style>();
+                                if (Stylename == null)
+                                    Stylename = doc.Styles.Where(x => ((Style)x).StyleIdentifier.ToString().ToUpper() == chLst[k].Check_Parameter.ToString().ToUpper()).FirstOrDefault<Style>();// ToList<Style>();                               
+                                if (Stylename != null)
+                                {
+                                    builder.ParagraphFormat.Style = Stylename;
+                                    if (CheckLOT == true)
+                                    {
+                                        builder.MoveTo(TOCEndNode.ParentNode);
+                                    }
+                                    builder.ParagraphFormat.Alignment = ParagraphAlignment.Center;
+                                    builder.Writeln("LIST OF FIGURES");
+                                    builder.CurrentParagraph.ParagraphFormat.ClearFormatting();
+                                    builder.InsertTableOfContents("TOC \\h \\z \\c \"Figure\"");
+                                    if (doc.Sections[0].PageSetup.Orientation == Orientation.Landscape)
+                                    {
+                                        builder.CurrentSection.PageSetup.Orientation = Orientation.Portrait;
+                                        builder.InsertBreak(BreakType.SectionBreakNewPage);
+                                        builder.CurrentSection.PageSetup.Orientation = Orientation.Landscape;
+                                    }
+                                    else
+                                        builder.InsertBreak(BreakType.PageBreak);
+                                    builder.CurrentParagraph.ParagraphFormat.ClearFormatting();
+                                    if (paraStyle != null)
+                                        builder.CurrentParagraph.ParagraphFormat.Style = paraStyle;
+                                    FixLof = true;
+                                }
+                            }
+                        }
+                    }
+                }
+                else if (Tocfamily == true && CheckLOT == false && CheckLOF == false && FigureFlag == true && TableFlag == true)
+                {
+                    paraStyleLOT = null;
+                    paraStyleLOF = null;
+                    bool isTocExisted = false;
+                    Node TOCBeginNode = null;
+                    Node TOCEndNode = null;
+                    List<Node> FieldNodes = doc.GetChildNodes(NodeType.Any, true).Where(x => (x.NodeType == NodeType.FieldStart || x.NodeType == NodeType.FieldEnd || x.NodeType == NodeType.FieldSeparator)).ToList();
+                    foreach (Node start in FieldNodes)
+                    {
+                        if (!isTocExisted && start.NodeType == NodeType.FieldStart && ((FieldStart)start).FieldType == FieldType.FieldTOC)
+                        {
+                            isTocExisted = true;
+                            TOCBeginNode = start;
+                        }
+                        if (isTocExisted && start.NodeType == NodeType.FieldEnd && ((FieldEnd)start).FieldType == FieldType.FieldTOC)
+                        {
+                            TOCEndNode = start;
+                            break;
+                        }
+                        if (start.NodeType == NodeType.FieldSeparator && ((FieldSeparator)start).FieldType == FieldType.FieldTOC)
+                        {
+                            isTocExisted = true;
+                            TOCBeginNode = start;
+                        }
+                    }
+                    if (chLst.Count > 0)
+                    {
+                        DocumentBuilder builder = new DocumentBuilder(doc);
+                        for (int k = 0; k < chLst.Count; k++)
+                        {
+                            chLst[k].Parent_Checklist_ID = rObj.CheckList_ID;
+                            chLst[k].JID = rObj.JID;
+                            chLst[k].Job_ID = rObj.Job_ID;
+                            chLst[k].Folder_Name = rObj.Folder_Name;
+                            chLst[k].File_Name = rObj.File_Name;
+                            chLst[k].Created_ID = rObj.Created_ID;
+
+                            if (chLst[k].Check_Name == "\"List of Tables\" Heading Style" && chLst[k].Check_Type == 1)
+                            {
+                                Style Stylename = doc.Styles.Where(x => ((Style)x).Name.ToUpper() == chLst[k].Check_Parameter.ToString().ToUpper()).FirstOrDefault<Style>();
+                                if (Stylename == null)
+                                    Stylename = doc.Styles.Where(x => ((Style)x).StyleIdentifier.ToString().ToUpper() == chLst[k].Check_Parameter.ToString().ToUpper()).FirstOrDefault<Style>();// ToList<Style>();                               
+                                if (Stylename != null)
+                                {
+                                    if (TOCEndNode.ParentNode.Range.Text.Trim() != "")
+                                    {
+                                        Paragraph par = new Paragraph(doc);
+                                        if (TOCEndNode.NextSibling != null)
+                                        {
+                                            Run run = (Run)TOCEndNode.NextSibling;
+                                            Paragraph pr1 = (Paragraph)run.ParentParagraph;
+                                            pr1.ParentSection.Body.InsertAfter(par, pr1);
+                                            builder.MoveTo(par);
+                                        }
+                                        else
+                                            builder.MoveTo(TOCEndNode.ParentNode);
+                                    }
+                                    else
+                                        builder.MoveTo(TOCEndNode.ParentNode);
+                                    builder.ParagraphFormat.Style = Stylename;
+                                    builder.ParagraphFormat.Alignment = ParagraphAlignment.Center;
+                                    builder.Writeln("LIST OF TABLES");
+                                    builder.CurrentParagraph.ParagraphFormat.ClearFormatting();
+                                    builder.InsertTableOfContents("TOC \\h \\z \\c \"Table\"");
+                                    builder.CurrentParagraph.ParagraphFormat.ClearFormatting();
+                                    if (paraStyle != null)
+                                        builder.CurrentParagraph.ParagraphFormat.Style = paraStyle;
+                                    FixLot = true;
+                                }
+                            }
+                            if (chLst[k].Check_Name == "\"List of Figures\" Heading Style" && chLst[k].Check_Type == 1)
+                            {
+                                Style Stylename = doc.Styles.Where(x => ((Style)x).Name.ToUpper() == chLst[k].Check_Parameter.ToString().ToUpper()).FirstOrDefault<Style>();
+                                if (Stylename == null)
+                                    Stylename = doc.Styles.Where(x => ((Style)x).StyleIdentifier.ToString().ToUpper() == chLst[k].Check_Parameter.ToString().ToUpper()).FirstOrDefault<Style>();// ToList<Style>();                               
+                                if (Stylename != null)
+                                {
+                                    //builder.MoveTo(TOCEndNode.ParentNode);
+                                    builder.ParagraphFormat.Style = Stylename;
+                                    builder.ParagraphFormat.Alignment = ParagraphAlignment.Center;
+                                    builder.Writeln("LIST OF FIGURES");
+                                    builder.CurrentParagraph.ParagraphFormat.ClearFormatting();
+                                    builder.InsertTableOfContents("TOC \\h \\z \\c \"Figure\"");
+                                    if (TOCEndNode.ParentNode.NextSibling != null && !TOCEndNode.ParentNode.NextSibling.Range.Text.Contains(ControlChar.PageBreak))
+                                    {
+                                        if (doc.Sections[0].PageSetup.Orientation == Orientation.Landscape)
+                                        {
+                                            builder.CurrentSection.PageSetup.Orientation = Orientation.Portrait;
+                                            builder.InsertBreak(BreakType.SectionBreakNewPage);
+                                            builder.CurrentSection.PageSetup.Orientation = Orientation.Landscape;
+                                        }
+                                        else
+                                            builder.InsertBreak(BreakType.PageBreak);
+                                        builder.CurrentParagraph.ParagraphFormat.ClearFormatting();
+                                        if (paraStyle != null)
+                                            builder.CurrentParagraph.ParagraphFormat.Style = paraStyle;
+                                    }
+                                    FixLof = true;
+                                }
+                            }
+                        }
+                    }
+                }
+                else if (Tocfamily == true && CheckLOF == false && FigureFlag == true)
+                {
+                    bool isTocExisted = false;
+                    Node TOCBeginNode = null;
+                    Node TOCEndNode = null;
+                    paraStyleLOF = null;
+                    List<Node> FieldNodes = doc.GetChildNodes(NodeType.Any, true).Where(x => (x.NodeType == NodeType.FieldStart || x.NodeType == NodeType.FieldEnd)).ToList();
+                    foreach (Node start in FieldNodes)
+                    {
+                        if (!isTocExisted && start.NodeType == NodeType.FieldStart && ((FieldStart)start).FieldType == FieldType.FieldTOC)
+                        {
+                            isTocExisted = true;
+                            TOCBeginNode = start;
+                        }
+                        if (isTocExisted && start.NodeType == NodeType.FieldEnd && ((FieldEnd)start).FieldType == FieldType.FieldTOC)
+                        {
+                            TOCEndNode = start;
+                            //break;
+                        }
+                    }
+                    if (chLst.Count > 0)
+                    {
+                        for (int k = 0; k < chLst.Count; k++)
+                        {
+                            chLst[k].Parent_Checklist_ID = rObj.CheckList_ID;
+                            chLst[k].JID = rObj.JID;
+                            chLst[k].Job_ID = rObj.Job_ID;
+                            chLst[k].Folder_Name = rObj.Folder_Name;
+                            chLst[k].File_Name = rObj.File_Name;
+                            chLst[k].Created_ID = rObj.Created_ID;
+
+                            if (chLst[k].Check_Name == "\"List of Figures\" Heading Style" && chLst[k].Check_Type == 1)
+                            {
+                                Style Stylename = doc.Styles.Where(x => ((Style)x).Name.ToUpper() == chLst[k].Check_Parameter.ToString().ToUpper()).FirstOrDefault<Style>();
+                                if (Stylename == null)
+                                    Stylename = doc.Styles.Where(x => ((Style)x).StyleIdentifier.ToString().ToUpper() == chLst[k].Check_Parameter.ToString().ToUpper()).FirstOrDefault<Style>();// ToList<Style>();                               
+                                if (Stylename != null)
+                                {
+                                    DocumentBuilder builder = new DocumentBuilder(doc);
+                                    builder.MoveTo(TOCEndNode.ParentNode);
+                                    builder.ParagraphFormat.Style = Stylename;
+                                    builder.ParagraphFormat.Alignment = ParagraphAlignment.Center;
+                                    builder.Writeln("LIST OF FIGURES");
+                                    builder.CurrentParagraph.ParagraphFormat.ClearFormatting();
+                                    builder.InsertTableOfContents("TOC \\h \\z \\c \"Figure\"");
+
+                                    if (TOCEndNode.ParentNode.NextSibling != null && !TOCEndNode.ParentNode.NextSibling.Range.Text.Contains(ControlChar.PageBreak))
+                                    {
+                                        if (doc.Sections[0].PageSetup.Orientation == Orientation.Landscape)
+                                        {
+                                            builder.CurrentSection.PageSetup.Orientation = Orientation.Portrait;
+                                            builder.InsertBreak(BreakType.SectionBreakNewPage);
+                                            builder.CurrentSection.PageSetup.Orientation = Orientation.Landscape;
+                                        }
+                                        else
+                                            builder.InsertBreak(BreakType.PageBreak);
+                                        builder.CurrentParagraph.ParagraphFormat.ClearFormatting();
+                                        if (paraStyle != null)
+                                            builder.CurrentParagraph.ParagraphFormat.Style = paraStyle;
+                                    }
+                                    FixLof = true;
+                                    //doc.AcceptAllRevisions();
+                                }
+                            }
+                        }
+                    }
+                }
+                else if (Tocfamily == true && CheckLOT == false && TableFlag == true)
+                {
+                    bool isTocExisted = false;
+                    Node TOCBeginNode = null;
+                    Node TOCEndNode = null;
+                    paraStyleLOT = null;
+                    List<Node> FieldNodes = doc.GetChildNodes(NodeType.Any, true).Where(x => (x.NodeType == NodeType.FieldStart || x.NodeType == NodeType.FieldEnd)).ToList();
+                    foreach (Node start in FieldNodes)
+                    {
+                        if (!isTocExisted && start.NodeType == NodeType.FieldStart && ((FieldStart)start).FieldType == FieldType.FieldTOC)
+                        {
+                            isTocExisted = true;
+                            TOCBeginNode = start;
+                        }
+                        if (isTocExisted && start.NodeType == NodeType.FieldEnd && ((FieldEnd)start).FieldType == FieldType.FieldTOC)
+                        {
+                            TOCEndNode = start;
+                            break;
+                        }
+                    }
+                    if (chLst.Count > 0)
+                    {
+                        for (int k = 0; k < chLst.Count; k++)
+                        {
+                            chLst[k].Parent_Checklist_ID = rObj.CheckList_ID;
+                            chLst[k].JID = rObj.JID;
+                            chLst[k].Job_ID = rObj.Job_ID;
+                            chLst[k].Folder_Name = rObj.Folder_Name;
+                            chLst[k].File_Name = rObj.File_Name;
+                            chLst[k].Created_ID = rObj.Created_ID;
+
+                            if (chLst[k].Check_Name == "\"List of Tables\" Heading Style" && chLst[k].Check_Type == 1)
+                            {
+                                Style Stylename = doc.Styles.Where(x => ((Style)x).Name.ToUpper() == chLst[k].Check_Parameter.ToString().ToUpper()).FirstOrDefault<Style>();
+                                if (Stylename == null)
+                                    Stylename = doc.Styles.Where(x => ((Style)x).StyleIdentifier.ToString().ToUpper() == chLst[k].Check_Parameter.ToString().ToUpper()).FirstOrDefault<Style>();// ToList<Style>();                               
+                                if (Stylename != null)
+                                {
+                                    DocumentBuilder builder = new DocumentBuilder(doc);
+                                    builder.MoveTo(TOCEndNode.ParentNode);
+                                    builder.ParagraphFormat.Style = Stylename;
+                                    builder.ParagraphFormat.Alignment = ParagraphAlignment.Center;
+                                    builder.Writeln("LIST OF TABLES");
+                                    builder.CurrentParagraph.ParagraphFormat.ClearFormatting();
+                                    builder.InsertTableOfContents("TOC \\h \\z \\c \"Table\"");
+                                    builder.CurrentParagraph.ParagraphFormat.ClearFormatting();
+                                    if (paraStyle != null)
+                                        builder.CurrentParagraph.ParagraphFormat.Style = paraStyle;
+                                    FixLot = true;
+                                    // doc.AcceptAllRevisions();
+                                }
+                            }
+                        }
+                    }
+                }
+                if (FixToc == true && FixLot == true && FixLof == true)
+                {
+                    rObj.QC_Result = "Fixed";
+                    rObj.Comments = "TOC,LOT and LOF are Updated.";
+                }
+                else if (FixToc == true && FixLot == true && FixLof == false)
+                {
+                    rObj.QC_Result = "Fixed";
+                    rObj.Comments = "TOC and LOT are Updated.";
+                }
+                else if (FixToc == true && FixLot == false && FixLof == true)
+                {
+                    rObj.QC_Result = "Fixed";
+                    rObj.Comments = "TOC and LOF are Updated.";
+                }
+                else if (FixToc == false && FixLot == true && FixLof == true)
+                {
+                    rObj.QC_Result = "Fixed";
+                    rObj.Comments = "LOT and LOF are Updated.";
+                }
+                else if (FixToc == true && FixLot == false && FixLof == false)
+                {
+                    rObj.QC_Result = "Fixed";
+                    rObj.Comments = "TOC Updated.";
+                }
+                else if (FixToc == false && FixLot == false && FixLof == true)
+                {
+                    rObj.QC_Result = "Fixed";
+                    rObj.Comments = "LOF are Updated.";
+                }
+                else if (FixToc == false && FixLot == true && FixLof == false)
+                {
+                    rObj.QC_Result = "Fixed";
+                    rObj.Comments = "LOT Updated.";
+                }
+                if (CheckStyles != null && CheckStyles != "")
+                {
+                    CheckStyles = CheckStyles.Substring(0, CheckStyles.Length - 1);
+                    rObj.Comments = rObj.Comments + "," + CheckStyles + " styles not exist in the document.";
+                }
+                doc.UpdateFields();
+                //doc.UpdatePageLayout();
+                foreach (Paragraph para in doc.GetChildNodes(NodeType.Paragraph, true).Where(x => ((Paragraph)x).ParagraphFormat.StyleIdentifier == StyleIdentifier.Toc1 || ((Paragraph)x).ParagraphFormat.StyleIdentifier == StyleIdentifier.Toc2 || ((Paragraph)x).ParagraphFormat.StyleIdentifier == StyleIdentifier.Toc3 || ((Paragraph)x).ParagraphFormat.StyleIdentifier == StyleIdentifier.Toc4 || ((Paragraph)x).ParagraphFormat.StyleIdentifier == StyleIdentifier.Toc5 || ((Paragraph)x).ParagraphFormat.StyleIdentifier == StyleIdentifier.Toc6 || ((Paragraph)x).ParagraphFormat.StyleIdentifier == StyleIdentifier.Toc7 || ((Paragraph)x).ParagraphFormat.StyleIdentifier == StyleIdentifier.Toc8 || ((Paragraph)x).ParagraphFormat.StyleIdentifier == StyleIdentifier.Toc9 || ((Paragraph)x).ParagraphFormat.StyleIdentifier == StyleIdentifier.TableOfFigures))
+                {
+                    if (toccolor != null && toccolor != "")
+                        para.ParagraphFormat.Style.Font.Color = GetSystemDrawingColorFromHexString(toccolor);
+                    if (Tocstyname != null && Tocstyname != "")
+                        para.ParagraphFormat.Style.Font.Name = Tocstyname;
+                    if (Tocsize != 0)
+                        para.ParagraphFormat.Style.Font.Size = Tocsize;
+                    para.ParagraphFormat.Style.Font.Bold = Tocbold;
+                    para.ParagraphFormat.Style.Font.Italic = Tocitalic;
+                }
+                doc.Save(rObj.DestFilePath);
+                rObj.CHECK_END_TIME = DateTime.Now;
+            }
+            catch (Exception ex)
+            {
+                ErrorLogger.Error("JOB_ID:" + rObj.Job_ID + ", CHECK NAME: " + rObj.Check_Name + "\n" + ex);
+                rObj.Job_Status = "Error";
+                rObj.QC_Result = "Error";
+                rObj.Comments = "Technical error: " + ex.Message;
+            }
+        }
+
+
+        /// <summary>
+        /// Checking for Consistency Styles
+        /// </summary>
+        /// <param name="rObj"></param>
+        /// <param name="doc"></param>
+        public void ParagraphConsistencystyleCheck(RegOpsQC rObj, Document doc)
+        {
+            rObj.QC_Result = string.Empty;
+            rObj.Comments = string.Empty;
+            bool flag = false;
+            string Pagenumber = string.Empty;
+            string difstylesdata = string.Empty;
+            List<int> lst = new List<int>();
+            List<string> difstyles = new List<string>();
+            List<int> lstfx = new List<int>();
+            rObj.CHECK_START_TIME = DateTime.Now;
+            try
+            {
+                List<string> WordStyleslst = GetWordStyles(rObj.Created_ID);
+                LayoutCollector layout = new LayoutCollector(doc);
+                foreach (Section sct in doc.Sections)
+                {
+                    foreach (Paragraph para in sct.Body.GetChildNodes(NodeType.Paragraph, true))
+                    {
+                        Style sty = para.ParagraphFormat.Style;
+                        if (!WordStyleslst.Contains(sty.Name))
+                        {
+                            flag = true;
+                            if (layout.GetStartPageIndex(para) != 0)
+                                lst.Add(layout.GetStartPageIndex(para));
+                            difstyles.Add(sty.Name);
+                        }
+                    }
+                }
+                if (flag == false)
+                {
+                    rObj.QC_Result = "Passed";
+                    rObj.Comments = "All paragraphs styles in document are in consistency";
+                }
+                else
+                {
+                    List<int> lst1 = lst.Distinct().ToList();
+                    lst1.Sort();
+                    List<string> diffstyleslist = difstyles.Distinct().ToList();
+                    if (lst1.Count > 0 && diffstyleslist.Count > 0)
+                    {
+                        Pagenumber = string.Join(", ", lst1.ToArray());
+                        difstylesdata = string.Join(", ", diffstyleslist.ToArray());
+                        rObj.QC_Result = "Failed";
+                        rObj.Comments = "Inconsistency styles " + difstylesdata + " exist in Page Numbers: " + Pagenumber;
+                    }
+                    else
+                    {
+                        rObj.QC_Result = "Failed";
+                        rObj.Comments = "Inconsistency styles exist";
+
+                    }
+                }
+                rObj.CHECK_END_TIME = DateTime.Now;
+            }
+            catch (Exception ex)
+            {
+                ErrorLogger.Error("JOB_ID:" + rObj.Job_ID + ", CHECK NAME: " + rObj.Check_Name + "\n" + ex);
+                rObj.Job_Status = "Error";
+                rObj.QC_Result = "Error";
+                rObj.Comments = "Technical error: " + ex.Message;
+
+            }
+        }
+
+        public List<string> GetWordStyles(Int64 Created_ID)
+        {
+            List<string> listWordStyles = null;
+            try
+            {
+                Connection conn = new Connection();
+                string[] m_ConnDetails = getConnectionInfo(Created_ID).Split('|');
+                m_DummyConn = m_DummyConn.Replace("USERNAME", m_ConnDetails[0].ToString());
+                m_DummyConn = m_DummyConn.Replace("PASSWORD", m_ConnDetails[1].ToString());
+                conn.connectionstring = m_DummyConn;
+                DataSet ds = new DataSet();
+                ds = conn.GetDataSet("Select LIBRARY_VALUE from LIBRARY where LIBRARY_NAME = 'QC_WORD_STYLES'", CommandType.Text, ConnectionState.Open);
+                if (ds.Tables[0].Rows.Count > 0)
+                {
+                    listWordStyles = new List<string>();
+                    for (int i = 0; i < ds.Tables[0].Rows.Count; i++)
+                    {
+                        listWordStyles.Add(ds.Tables[0].Rows[i]["LIBRARY_VALUE"].ToString());
+                    }
+                }
+                return listWordStyles;
+            }
+            catch (Exception ex)
+            {
+                ErrorLogger.Error(ex);
+                return listWordStyles;
+            }
+        }
+
+        /// <summary>
+        /// Checking for Symbol Styles Fonts
+        /// </summary>
+        /// <param name="rObj"></param>
+        /// <param name="doc"></param>
+        public void CheckSymbolFontInDocument(RegOpsQC rObj, Document doc)
+        {
+            rObj.QC_Result = string.Empty;
+            rObj.Comments = string.Empty;
+            bool flag = false;
+            string Pagenumber = string.Empty;
+            string symbols = string.Empty;
+            Dictionary<string, string> lst = new Dictionary<string, string>();
+            List<string> difstyles = new List<string>();
+            List<int> lstfx = new List<int>();
+            rObj.CHECK_START_TIME = DateTime.Now;
+            try
+            {
+                doc = new Document(rObj.DestFilePath);
+                LayoutCollector layout = new LayoutCollector(doc);
+                StyleCollection stylist = doc.Styles;
+                stylist = doc.Styles;
+                if (stylist.Where(x => x.Name.ToUpper() == "PARAGRAPH").Count() > 0 || stylist.Where(x => x.Name.ToUpper() == "TABLETEXT").Count() > 0)
+                {
+                    foreach (Section sct in doc.Sections)
+                    {
+                        foreach (Paragraph para in sct.Body.GetChildNodes(NodeType.Paragraph, true))
+                        {
+                            foreach (Node nd in para.ChildNodes)
+                            {
+                                if (nd is Run)
+                                {
+                                    Run run = (Run)nd;
+                                    if (run.Font.Name == "Symbol")
+                                    {
+                                        flag = true;
+                                        if (layout.GetStartPageIndex(run) != 0 && !lst.Keys.Contains(layout.GetStartPageIndex(run).ToString()))
+                                            lst.Add(layout.GetStartPageIndex(run).ToString(), "");
+                                        lst[layout.GetStartPageIndex(run).ToString()] = run.Range.Text + ",";
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                foreach (Section sct in doc.Sections)
+                {
+                    NodeCollection paras2 = sct.GetChildNodes(NodeType.Paragraph, true);
+                    foreach (Paragraph para in paras2.OfType<Paragraph>().Where(p => p.ListFormat.IsListItem))
+                    {
+                            List<int> listobj = new List<int>();
+                        if (layout.GetStartPageIndex(para) != 0)
+                         listobj.Add(layout.GetStartPageIndex(para));
+                        if (para.ListLabel != null && para.ListLabel.LabelString != "")
+                        {
+                            if (para.ListLabel.Font.Name == "Symbol")
+                            {
+                                flag = true;
+                                if (layout.GetStartPageIndex(para) != 0 && !lst.Keys.Contains(layout.GetStartPageIndex(para).ToString()))
+                                    lst.Add(layout.GetStartPageIndex(para).ToString(), "");
+                                lst[layout.GetStartPageIndex(para).ToString()] = para.ListLabel.LabelString + ",";
+                            }
+                        }
+                    }
+                }
+                if (flag)
+                {
+                    string strTemp = string.Empty;
+                    foreach (KeyValuePair<string, string> item in lst)
+                    {
+                        strTemp = strTemp + "Page No: " + item.Key + ":- " + item.Value.TrimEnd(',') + "\n";
+                    }
+                    rObj.QC_Result = "Failed";
+                    rObj.Comments = "The following symbols found in the updated document: " + strTemp.TrimEnd(',');
+                }
+                else
+                {
+                    rObj.QC_Result = "Passed";
+                    rObj.Comments = "No symbol font found in the updated document";
+                }
+                rObj.CHECK_END_TIME = DateTime.Now;
+            }
+            catch (Exception ex)
+            {
+                ErrorLogger.Error("JOB_ID:" + rObj.Job_ID + ", CHECK NAME: " + rObj.Check_Name + "\n" + ex);
+                rObj.Job_Status = "Error";
+                rObj.QC_Result = "Error";
+                rObj.Comments = "Technical error: " + ex.Message;
+
+            }
+        }
+    }
+}
